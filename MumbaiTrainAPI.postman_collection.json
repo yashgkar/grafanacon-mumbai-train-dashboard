@@ -1,0 +1,672 @@
+{
+  "info": {
+    "name": "Mumbai Local Train API",
+    "_postman_id": "mumbai-train-api-collection-v1",
+    "description": "Test collection for the Mumbai Local Train Grafana Infinity dashboard API.\n\n**Variables to set:**\n- `base_url` → your Lambda URL or `http://localhost:8000`\n- `api_key` → your secret key (default: `mumbai-train-secret`)\n\nRun the full suite via Collection Runner to validate all endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000", "description": "Base API URL. No trailing slash." },
+    { "key": "api_key",  "value": "mumbai-train-secret",  "description": "X-API-Key header value." }
+  ],
+  "item": [
+
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health — OK",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('status = ok', () => pm.expect(pm.response.json().status).to.eql('ok'));",
+            "pm.test('has timestamp', () => pm.expect(new Date(pm.response.json().timestamp).toString()).to.not.eql('Invalid Date'));",
+            "pm.test('response < 3000ms', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+          ]}}]
+        }
+      ]
+    },
+
+    {
+      "name": "1 · Line Status (Stat panel)",
+      "item": [
+        {
+          "name": "GET /lines/status — OK",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/lines/status", "host": ["{{base_url}}"], "path": ["lines","status"] },
+            "description": "Returns one object per line. Grafana Infinity: JSON array, stat panel, color via value mappings on status_code."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+
+            "pm.test('Returns exactly 3 lines', () => {",
+            "    const json = pm.response.json();",
+            "    pm.expect(json).to.be.an('array').with.lengthOf(3);",
+            "});",
+
+            "pm.test('All 3 lines present', () => {",
+            "    const names = pm.response.json().map(l => l.line);",
+            "    ['Central','Western','Harbour'].forEach(l => pm.expect(names).to.include(l));",
+            "});",
+
+            "pm.test('status is one of normal/delay/disrupted', () => {",
+            "    pm.response.json().forEach(l => {",
+            "        pm.expect(['normal','delay','disrupted']).to.include(l.status);",
+            "    });",
+            "});",
+
+            "pm.test('status_code matches status', () => {",
+            "    const map = {normal:0, delay:1, disrupted:2};",
+            "    pm.response.json().forEach(l => {",
+            "        pm.expect(l.status_code).to.eql(map[l.status]);",
+            "    });",
+            "});",
+
+            "pm.test('delay_minutes is 0 when normal', () => {",
+            "    pm.response.json().filter(l => l.status === 'normal').forEach(l => {",
+            "        pm.expect(l.delay_minutes).to.eql(0);",
+            "    });",
+            "});",
+
+            "pm.test('delay_minutes > 0 when not normal', () => {",
+            "    pm.response.json().filter(l => l.status !== 'normal').forEach(l => {",
+            "        pm.expect(l.delay_minutes).to.be.above(0);",
+            "    });",
+            "});",
+
+            "pm.test('has required fields', () => {",
+            "    const keys = ['line','status','status_code','delay_minutes','trains_running','updated_at'];",
+            "    pm.response.json().forEach(l => keys.forEach(k => pm.expect(l).to.have.property(k)));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /lines/status — FAIL: no API key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/lines/status", "host": ["{{base_url}}"], "path": ["lines","status"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 401', () => pm.response.to.have.status(401));",
+            "pm.test('detail field present', () => pm.expect(pm.response.json()).to.have.property('detail'));"
+          ]}}]
+        },
+        {
+          "name": "GET /lines/status — FAIL: wrong API key",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "wrong-key" }],
+            "url": { "raw": "{{base_url}}/lines/status", "host": ["{{base_url}}"], "path": ["lines","status"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 401', () => pm.response.to.have.status(401));",
+            "pm.test('not a lines array', () => pm.expect(pm.response.json()).to.not.be.an('array'));"
+          ]}}]
+        }
+      ]
+    },
+
+    {
+      "name": "2 · Train Count (Bar gauge)",
+      "item": [
+        {
+          "name": "GET /trains/count — OK",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/trains/count", "host": ["{{base_url}}"], "path": ["trains","count"] },
+            "description": "Running vs halted per line. Infinity: JSON, bar gauge on running + halted fields."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+
+            "pm.test('3 lines returned', () => {",
+            "    pm.expect(pm.response.json()).to.be.an('array').with.lengthOf(3);",
+            "});",
+
+            "pm.test('running + halted = total', () => {",
+            "    pm.response.json().forEach(l => {",
+            "        pm.expect(l.running + l.halted).to.eql(l.total);",
+            "    });",
+            "});",
+
+            "pm.test('pct_running is 0-100', () => {",
+            "    pm.response.json().forEach(l => {",
+            "        pm.expect(l.pct_running).to.be.within(0, 100);",
+            "    });",
+            "});",
+
+            "pm.test('halted is always < running', () => {",
+            "    pm.response.json().forEach(l => {",
+            "        pm.expect(l.halted).to.be.below(l.running);",
+            "    });",
+            "});",
+
+            "pm.test('has required fields', () => {",
+            "    const keys = ['line','running','halted','total','pct_running'];",
+            "    pm.response.json().forEach(l => keys.forEach(k => pm.expect(l).to.have.property(k)));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /trains/count — FAIL: no API key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/trains/count", "host": ["{{base_url}}"], "path": ["trains","count"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 401', () => pm.response.to.have.status(401));"
+          ]}}]
+        }
+      ]
+    },
+
+    {
+      "name": "3 · Crowd Heatmap (Heatmap panel)",
+      "item": [
+        {
+          "name": "GET /crowd/heatmap — defaults (12h all lines)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/crowd/heatmap",
+              "host": ["{{base_url}}"], "path": ["crowd","heatmap"]
+            },
+            "description": "Time-series shape for Infinity heatmap.\nInfinity config: Format=Time series, Timestamp=timestamp, Value=density, Group by=zone.\nEach zone becomes one series → heatmap rows. Grafana auto-buckets by timestamp."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+
+            "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+
+            "pm.test('Exactly 5 zones × 12 hours = 60 data points', () => {",
+            "    pm.expect(pm.response.json()).to.have.lengthOf(60);",
+            "});",
+
+            "pm.test('All 5 zones present', () => {",
+            "    const zones = [...new Set(pm.response.json().map(r => r.zone))];",
+            "    pm.expect(zones).to.have.lengthOf(5);",
+            "    ['Zone 1','Zone 2','Zone 3','Zone 4','Zone 5'].forEach(z => pm.expect(zones).to.include(z));",
+            "});",
+
+            "pm.test('density is 0-100', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect(r.density).to.be.a('number').and.within(0, 100);",
+            "    });",
+            "});",
+
+            "pm.test('timestamps are valid ISO dates', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect(new Date(r.timestamp).toString()).to.not.eql('Invalid Date');",
+            "    });",
+            "});",
+
+            "pm.test('data is sorted chronologically', () => {",
+            "    const json = pm.response.json();",
+            "    for (let i = 1; i < json.length; i++) {",
+            "        const prev = new Date(json[i-1].timestamp);",
+            "        const curr = new Date(json[i].timestamp);",
+            "        pm.expect(curr.getTime()).to.be.at.least(prev.getTime());",
+            "    }",
+            "});",
+
+            "pm.test('has required fields per row', () => {",
+            "    const keys = ['timestamp','zone','density','line'];",
+            "    pm.response.json().forEach(r => keys.forEach(k => pm.expect(r).to.have.property(k)));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /crowd/heatmap — filter by line=Central",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/crowd/heatmap?line=Central",
+              "host": ["{{base_url}}"], "path": ["crowd","heatmap"],
+              "query": [{ "key": "line", "value": "Central" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('All rows have line=Central', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.line).to.eql('Central'));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /crowd/heatmap — custom hours=6",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/crowd/heatmap?hours=6",
+              "host": ["{{base_url}}"], "path": ["crowd","heatmap"],
+              "query": [{ "key": "hours", "value": "6" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('5 zones × 6 hours = 30 rows', () => {",
+            "    pm.expect(pm.response.json()).to.have.lengthOf(30);",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /crowd/heatmap — FAIL: no API key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/crowd/heatmap", "host": ["{{base_url}}"], "path": ["crowd","heatmap"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 401', () => pm.response.to.have.status(401));"
+          ]}}]
+        },
+        {
+          "name": "GET /crowd/heatmap — FAIL: hours out of range (0)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/crowd/heatmap?hours=0",
+              "host": ["{{base_url}}"], "path": ["crowd","heatmap"],
+              "query": [{ "key": "hours", "value": "0" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 422', () => pm.response.to.have.status(422));"
+          ]}}]
+        },
+        {
+          "name": "GET /crowd/heatmap — FAIL: hours out of range (25)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/crowd/heatmap?hours=25",
+              "host": ["{{base_url}}"], "path": ["crowd","heatmap"],
+              "query": [{ "key": "hours", "value": "25" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 422', () => pm.response.to.have.status(422));"
+          ]}}]
+        }
+      ]
+    },
+
+    {
+      "name": "4 · Train Frequency (Stat panel)",
+      "item": [
+        {
+          "name": "GET /trains/frequency — OK",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/trains/frequency", "host": ["{{base_url}}"], "path": ["trains","frequency"] },
+            "description": "AC vs Non-AC trains per hour. Infinity: JSON array, stat panel — one tile per row."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+
+            "pm.test('6 rows: 3 lines × 2 types', () => {",
+            "    pm.expect(pm.response.json()).to.be.an('array').with.lengthOf(6);",
+            "});",
+
+            "pm.test('type is AC or Non-AC', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect(['AC','Non-AC']).to.include(r.type);",
+            "    });",
+            "});",
+
+            "pm.test('trains_per_hour is a positive number', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect(r.trains_per_hour).to.be.a('number').and.above(0);",
+            "    });",
+            "});",
+
+            "pm.test('avg_interval_min is positive', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect(r.avg_interval_min).to.be.a('number').and.above(0);",
+            "    });",
+            "});",
+
+            "pm.test('Non-AC always higher frequency than AC per line', () => {",
+            "    const json = pm.response.json();",
+            "    ['Central','Western','Harbour'].forEach(line => {",
+            "        const ac    = json.find(r => r.line === line && r.type === 'AC');",
+            "        const nonac = json.find(r => r.line === line && r.type === 'Non-AC');",
+            "        if (ac && nonac) pm.expect(nonac.trains_per_hour).to.be.above(ac.trains_per_hour);",
+            "    });",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /trains/frequency — FAIL: no API key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/trains/frequency", "host": ["{{base_url}}"], "path": ["trains","frequency"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 401', () => pm.response.to.have.status(401));"
+          ]}}]
+        }
+      ]
+    },
+
+    {
+      "name": "5 · Incidents (Table panel)",
+      "item": [
+        {
+          "name": "GET /incidents — OK (all)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/incidents", "host": ["{{base_url}}"], "path": ["incidents"] },
+            "description": "All incidents sorted by severity. Infinity: JSON array, Table panel. severity_code drives Grafana color thresholds."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+
+            "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+
+            "pm.test('Between 4 and 10 incidents', () => {",
+            "    const len = pm.response.json().length;",
+            "    pm.expect(len).to.be.within(4, 10);",
+            "});",
+
+            "pm.test('has required fields', () => {",
+            "    const keys = ['id','line','severity','severity_code','type','description','station','started_at','duration_min','resolved'];",
+            "    pm.response.json().forEach(r => keys.forEach(k => pm.expect(r).to.have.property(k)));",
+            "});",
+
+            "pm.test('severity is one of critical/high/medium/low', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect(['critical','high','medium','low']).to.include(r.severity);",
+            "    });",
+            "});",
+
+            "pm.test('severity_code matches severity', () => {",
+            "    const map = {critical:3, high:2, medium:1, low:0};",
+            "    pm.response.json().forEach(r => pm.expect(r.severity_code).to.eql(map[r.severity]));",
+            "});",
+
+            "pm.test('sorted by severity_code descending', () => {",
+            "    const codes = pm.response.json().map(r => r.severity_code);",
+            "    for (let i = 1; i < codes.length; i++) pm.expect(codes[i]).to.be.at.most(codes[i-1]);",
+            "});",
+
+            "pm.test('resolved is boolean', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.resolved).to.be.a('boolean'));",
+            "});",
+
+            "pm.test('duration_min is non-negative', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.duration_min).to.be.at.least(0));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /incidents — filter by line=Central",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/incidents?line=Central",
+              "host": ["{{base_url}}"], "path": ["incidents"],
+              "query": [{ "key": "line", "value": "Central" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('All incidents on Central line', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.line).to.eql('Central'));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /incidents — active_only=true",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/incidents?active_only=true",
+              "host": ["{{base_url}}"], "path": ["incidents"],
+              "query": [{ "key": "active_only", "value": "true" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('No resolved incidents returned', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.resolved).to.be.false);",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /incidents — FAIL: no API key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/incidents", "host": ["{{base_url}}"], "path": ["incidents"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 401', () => pm.response.to.have.status(401));"
+          ]}}]
+        }
+      ]
+    },
+
+    {
+      "name": "6 · Arrivals (Table panel)",
+      "item": [
+        {
+          "name": "GET /arrivals?station=CSTM — OK",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/arrivals?station=CSTM",
+              "host": ["{{base_url}}"], "path": ["arrivals"],
+              "query": [{ "key": "station", "value": "CSTM" }]
+            },
+            "description": "Next arrivals at CSTM. In Grafana, station maps to dashboard variable $station."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+
+            "pm.test('Returns array of 8 trains', () => {",
+            "    pm.expect(pm.response.json()).to.be.an('array').with.lengthOf(8);",
+            "});",
+
+            "pm.test('has required fields', () => {",
+            "    const keys = ['train_no','destination','line','platform','eta_minutes','type','is_ac','status','delay_min','coaches'];",
+            "    pm.response.json().forEach(r => keys.forEach(k => pm.expect(r).to.have.property(k)));",
+            "});",
+
+            "pm.test('sorted by eta_minutes ascending', () => {",
+            "    const etas = pm.response.json().map(r => r.eta_minutes);",
+            "    for (let i = 1; i < etas.length; i++) pm.expect(etas[i]).to.be.at.least(etas[i-1]);",
+            "});",
+
+            "pm.test('all on Central line (CSTM is Central)', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.line).to.eql('Central'));",
+            "});",
+
+            "pm.test('type is Express/Fast/Slow', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect(['Express','Fast','Slow']).to.include(r.type);",
+            "    });",
+            "});",
+
+            "pm.test('is_ac is boolean', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.is_ac).to.be.a('boolean'));",
+            "});",
+
+            "pm.test('delayed trains have delay_min > 0', () => {",
+            "    pm.response.json().filter(r => r.status === 'delayed').forEach(r => {",
+            "        pm.expect(r.delay_min).to.be.above(0);",
+            "    });",
+            "});",
+
+            "pm.test('coaches is 9 or 12', () => {",
+            "    pm.response.json().forEach(r => {",
+            "        pm.expect([9, 12]).to.include(r.coaches);",
+            "    });",
+            "});",
+
+            "pm.test('eta_minutes > 0 for all trains', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.eta_minutes).to.be.above(0));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /arrivals?station=Andheri — OK (Western line)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/arrivals?station=Andheri",
+              "host": ["{{base_url}}"], "path": ["arrivals"],
+              "query": [{ "key": "station", "value": "Andheri" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('line is Western for Andheri', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.line).to.eql('Western'));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /arrivals?station=Panvel — OK (Harbour line)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/arrivals?station=Panvel",
+              "host": ["{{base_url}}"], "path": ["arrivals"],
+              "query": [{ "key": "station", "value": "Panvel" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('line is Harbour for Panvel', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.line).to.eql('Harbour'));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /arrivals — all 8 valid stations",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/arrivals?station=Dadar",
+              "host": ["{{base_url}}"], "path": ["arrivals"],
+              "query": [{ "key": "station", "value": "Dadar" }]
+            },
+            "description": "Test each station: CSTM, Dadar, Andheri, Borivali, Thane, Kurla, Bandra, Panvel"
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Returns 8 trains', () => pm.expect(pm.response.json()).to.have.lengthOf(8));"
+          ]}}]
+        },
+        {
+          "name": "GET /arrivals — FAIL: invalid station",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/arrivals?station=Mumbai",
+              "host": ["{{base_url}}"], "path": ["arrivals"],
+              "query": [{ "key": "station", "value": "Mumbai" }]
+            },
+            "description": "'Mumbai' is not a valid station code. Expect 400."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 400', () => pm.response.to.have.status(400));",
+            "pm.test('detail mentions valid stations', () => {",
+            "    const detail = pm.response.json().detail;",
+            "    pm.expect(detail).to.include('Unknown station');",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /arrivals — FAIL: no station param (uses default CSTM)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/arrivals", "host": ["{{base_url}}"], "path": ["arrivals"] },
+            "description": "No station param → defaults to CSTM. Should still return 200."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200 (defaults to CSTM)', () => pm.response.to.have.status(200));",
+            "pm.test('Returns Central line trains', () => {",
+            "    pm.response.json().forEach(r => pm.expect(r.line).to.eql('Central'));",
+            "});"
+          ]}}]
+        },
+        {
+          "name": "GET /arrivals — FAIL: no API key",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/arrivals?station=CSTM", "host": ["{{base_url}}"], "path": ["arrivals"], "query": [{ "key": "station", "value": "CSTM" }] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 401', () => pm.response.to.have.status(401));"
+          ]}}]
+        }
+      ]
+    },
+
+    {
+      "name": "Edge Cases",
+      "item": [
+        {
+          "name": "GET /nonexistent — 404",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/lines/doesnotexist", "host": ["{{base_url}}"], "path": ["lines","doesnotexist"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 404', () => pm.response.to.have.status(404));"
+          ]}}]
+        },
+        {
+          "name": "POST /lines/status — method not allowed",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/lines/status", "host": ["{{base_url}}"], "path": ["lines","status"] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 405', () => pm.response.to.have.status(405));"
+          ]}}]
+        },
+        {
+          "name": "GET /crowd/heatmap — non-integer hours param",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/crowd/heatmap?hours=abc",
+              "host": ["{{base_url}}"], "path": ["crowd","heatmap"],
+              "query": [{ "key": "hours", "value": "abc" }]
+            }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 422', () => pm.response.to.have.status(422));"
+          ]}}]
+        }
+      ]
+    }
+
+  ]
+}
